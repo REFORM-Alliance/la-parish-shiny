@@ -7,9 +7,7 @@ library(data.table)
 library(here)
 library(tidycensus)
 library(gitlink)
-library(rsconnect)
 library(shiny)
-library(scales)
 
 
 ####Read in Data####
@@ -75,53 +73,47 @@ full_charges <-
   pull(charge_clean_full)
 
 full_charges_final <- c("Burglary (inclusive)", "Rape (inlcusive)", "Robbery (inclusive)", "Second Degree Murder (inclusive)", full_charges)
-
+  
 
 ####Define App####
 ##User Interface
 ui <- fluidPage(
   titlePanel("Louisiana Charge Data Visualizer"),
   
-  fluidRow(
-    column(3,
-           
-           # Age Slider Input (2-way)
-           sliderInput("age_slider", "Select Age Range:", 
-                       min = min(parish_data_clean$age, na.rm = TRUE), 
-                       max = max(parish_data_clean$age, na.rm = TRUE), 
-                       value = c(min(parish_data_clean$age, na.rm = TRUE), max(parish_data_clean$age, na.rm = TRUE))),
-           
-           # Time Incarcerated Slider Input (2-way)
-           sliderInput("time_slider", "Select Time Incarcerated Range (in Years):", 
-                       min = min(parish_data_clean$time_inc_years, na.rm = TRUE),
-                       max = max(parish_data_clean$time_inc_years, na.rm = TRUE), 
-                       value = c(min(parish_data_clean$time_inc_years, na.rm = TRUE), max(parish_data_clean$time_inc_years, na.rm = TRUE)))
-    ),
-    column(4,
-           
-           # Checkbox Input for Charge 
-           selectizeInput("charge_select", "Select Charge Type(s):", 
-                          choices = c("All" = "All", full_charges_final),
-                          selected = "All", 
-                          multiple = TRUE, 
-                          options = list(placeholder = "Select Charge Type(s)", maxItems = NULL, create = FALSE))
-    ),
-    column(4,
-           
-           # Checkbox Input for Parishes
-           selectizeInput("parish_select", "Select Parish(es):", 
-                          choices = c("All" = "All", unique(parish_data_clean$parish)), 
-                          selected = "All", 
-                          multiple = TRUE, 
-                          options = list(placeholder = "Select Parish(es)", maxItems = NULL, create = FALSE))
-           
+  sidebarLayout(
+    sidebarPanel(
+      
+      # Age Slider Input (2-way)
+      sliderInput("age_slider", "Select Age Range:", 
+                  min = min(parish_data_clean$age, na.rm = TRUE), 
+                  max = max(parish_data_clean$age, na.rm = TRUE), 
+                  value = c(min(parish_data_clean$age, na.rm = TRUE), max(parish_data_clean$age, na.rm = TRUE))),
+      
+      # Time Incarcerated Slider Input (2-way)
+      sliderInput("time_slider", "Select Time Incarcerated Range (in Years):", 
+                  min = min(parish_data_clean$time_inc_years, na.rm = TRUE),
+                  max = max(parish_data_clean$time_inc_years, na.rm = TRUE), 
+                  value = c(min(parish_data_clean$time_inc_years, na.rm = TRUE), max(parish_data_clean$time_inc_years, na.rm = TRUE))), 
+      
+      # Checkbox Input for Charge 
+      selectizeInput("charge_select", "Select Charge Type(s):", 
+                     choices = c("All" = "All", full_charges_final),
+                     selected = full_charges_final, 
+                     multiple = TRUE, 
+                     options = list(placeholder = "Select Charge Type(s)", maxItems = NULL, create = FALSE)),
+      
+      # Checkbox Input for Parishes
+      selectizeInput("parish_select", "Select Parish(es):", 
+                     choices = c("All" = "All", unique(parish_data_clean$parish)), 
+                     selected = unique(parish_data_clean$parish), 
+                     multiple = TRUE, 
+                     options = list(placeholder = "Select Parish(es)", maxItems = NULL, create = FALSE))
+      
+    ), 
+    
+    mainPanel(
+      plotOutput("bar_plot")
     )
-  ), 
-  
-  # Results section
-  fluidRow(
-    column(12, plotOutput("bar_plot")),  # Plot on the left
-    column(12, verbatimTextOutput("summary_stats"))  # Summary stats on the right
   )
 )
 
@@ -146,9 +138,9 @@ server <- function(input, output){
                                                parish %in% input$parish_select ~ 1, 
                                                TRUE ~ 0)) %>% 
       filter(age >= input$age_slider[1] & age <= input$age_slider[2] &
-               time_inc_years >= input$time_slider[1] & time_inc_years <= input$time_slider[2] & 
-               select_these_charges == 1 & 
-               select_these_parishes == 1) %>% 
+             time_incarcerated >= input$time_slider[1] & time_incarcerated <= input$time_slider[2] & 
+             select_these_charges == 1 & 
+             select_these_parishes == 1) %>% 
       dplyr::select(id) %>% 
       distinct()
   })
@@ -171,71 +163,35 @@ server <- function(input, output){
                                                parish %in% input$parish_select ~ 1, 
                                                TRUE ~ 0)) %>% 
       filter(!(age >= input$age_slider[1] & age <= input$age_slider[2] &
-                 time_inc_years >= input$time_slider[1] & time_inc_years <= input$time_slider[2] & 
-                 select_these_charges == 1 & 
-                 select_these_parishes == 1)) %>% 
+               time_incarcerated >= input$time_slider[1] & time_incarcerated <= input$time_slider[2] & 
+               select_these_charges == 1 & 
+               select_these_parishes == 1)) %>% 
       dplyr::select(id) %>% 
       distinct()
   })
   
-  # Summary stats output
-  output$summary_stats <- renderText({
-    
-    total <- 
-      parish_data_clean %>% 
-      dplyr::select(id) %>% 
-      distinct() %>% 
-      nrow()
-    
-    included <- nrow(filtered_data())
-    excluded <- nrow(excluded_data())
-    
-    paste0(
-      "Total Indivdiuals Charged: ", total, "\n",
-      "Included: ", included, " (", round((included / total) * 100, 1), "%)\n",
-      "Excluded: ", excluded, " (", round((excluded / total) * 100, 1), "%)"
-    )
-  })
-  
-  
   # Render bar plot to show included and excluded
   output$bar_plot <- renderPlot({
-    req(filtered_data())
-    
     included_count <- 
       filtered_data() %>% 
-      nrow() %>%
-      as.numeric() %>% 
-      replace_na(0)
+      nrow()
     
     excluded_count <- 
       excluded_data() %>% 
-      nrow() %>% 
-      as.numeric() %>%
-      replace_na(0)
+      nrow()
     
     # Create Plot
     plot_data <- 
       data.frame(status = c("Included", "Excluded"),
-                 count = c(included_count, excluded_count)) %>% 
-      mutate(percentage = 100 * count/sum(count))
+                 count = c(included_count, excluded_count))
     
     plot_data %>% 
       ggplot(aes(y = status, x = count, fill = status)) + 
-      geom_bar(stat = "identity", width = 0.5, show.legend = FALSE) +  # Decreased bar width
-      geom_text(aes(label = paste0(count, " (", round(percentage, 1), "%)")),
-                position = position_stack(vjust = 0.5),  # Centers text inside bars
-                size = 5, fontface = "bold", color = "white") +  # Adjust text size and color
+      geom_bar(stat = "identity", show.legend = FALSE) + 
       labs(caption = "Number of Individuals Included in New Filter", 
            x = "Count", 
            y = "Inclusion/Exclusion Status") + 
-      theme_minimal() +
-      theme(
-        text = element_text(size = 14),  # Increase overall font size
-        axis.title = element_text(size = 16, face = "bold"),  # Bigger axis labels
-        axis.text = element_text(size = 14),  # Bigger axis text
-        plot.caption = element_text(size = 12, hjust = 0.5)  # Center caption
-      )
+      theme_minimal()
     
   })
 }

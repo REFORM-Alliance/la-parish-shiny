@@ -1,0 +1,223 @@
+---
+title: "Visualization of Louisiana Sentencing Data"
+author: "Shá Sanders and Basil Seif"
+date: "`r Sys.Date()`"
+format: pdf
+---
+
+```{r, echo = FALSE, message = FALSE, warnings = FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warnings = FALSE)
+
+####Read in Libraries####
+library(tidyverse)
+library(data.table)
+library(here)
+library(knitr)
+library(tidycensus)
+library(viridis)
+library(ggforce)
+
+
+####Source R Script####
+"R" %>% 
+  here("analyze-parish-data.R") %>% 
+  source()
+
+####Visualizations####
+##Table of Charges by Count
+charges_counts_kbl <- 
+  parish_data_wide_full %>% 
+  mutate(charge_clean_full = 
+           charge_clean_full %>% 
+           str_replace_all("Attempt; ", "Attempted ")) %>% 
+  group_by(charge_clean_full) %>% 
+  dplyr::summarize(count = n()) %>% 
+  ungroup() %>% 
+  arrange(desc(count)) %>% 
+  rename("Charge Description" = "charge_clean_full", 
+         "Count" = "count") %>% 
+  kable(caption = "Summary of Type of Charge by Count")
+
+##Bar Plot by Parish
+parish_bar_plot <- 
+  parish_data_wide_full %>% 
+  mutate(parish = 
+           parish %>% 
+           str_to_title() %>% 
+           paste0(" Parish")) %>% 
+  group_by(parish) %>% 
+  dplyr::summarize(count = n()) %>% 
+  ungroup() %>% 
+  arrange(desc(count)) %>% 
+  mutate(parish = 
+           parish %>% 
+           str_replace_all("The", "the") %>% 
+           str_replace_all("St ", "St. ") %>% 
+           str_replace_all("Desoto", "De Soto") %>% 
+           str_replace_all("Vermillion", "Vermilion")) %>% 
+  left_join(census_data_la %>% 
+              rename("pop_estimate" = "estimate") %>% 
+              dplyr::select(geoid, parish, pop_estimate), 
+            by = c("parish")) %>% 
+  mutate(pop_estimate_cat = 
+           case_when(pop_estimate <= 10000 ~ "< 10k", 
+                     pop_estimate > 10000 & pop_estimate <= 20000 ~ "10k - 20k", 
+                     pop_estimate > 20000 & pop_estimate <= 50000 ~ "20k - 50k", 
+                     pop_estimate > 50000 & pop_estimate <= 100000 ~ "50k - 100k", 
+                     pop_estimate > 100000 ~ "> 100k", 
+                     TRUE ~ NA) %>% 
+           factor(levels = c("< 10k", "10k - 20k", "20k - 50k",
+                             "50k - 100k", "> 100k")), 
+         parish = 
+           parish %>% 
+           str_replace_all(" Parish", "")) %>% 
+  ggplot(aes(x = reorder(parish, -count), 
+             y = count,
+             fill = pop_estimate_cat)) + 
+  geom_col() + 
+  labs(caption = "Parish Charge Counts", 
+       x = "Parish", 
+       y = "Count", 
+       fill = "Total Parish Populations") + 
+  scale_fill_viridis_d(option = "viridis", direction = -1) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 65, hjust = 1),
+        legend.position = "bottom")
+
+##Weighted Histogram by Age 
+age_hist <- 
+  parish_data_wide_full %>% 
+  filter(is.na(age) == FALSE) %>% 
+  group_by(age) %>% 
+  dplyr::summarize(count = n()) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = age, weight = count)) + 
+  geom_histogram(fill = "steelblue", color = "black") + 
+  labs(caption = "Age Spread", 
+       x = "Age",
+       y = "Count") + 
+  theme_minimal()
+
+##Weighted Histograms by Age and Parish
+# page_nums <- 2
+# 
+# age_parish_hist <- 
+#   c(1:page_nums) %>% 
+#   map(~parish_data_wide_full %>% 
+#           group_by(parish) %>% 
+#           mutate(charge_count = n()) %>% 
+#           ungroup() %>% 
+#           arrange(desc(charge_count)) %>% 
+#           mutate(rank = dense_rank(desc(charge_count))) %>% 
+#           filter(rank <= parish_num) %>% 
+#           mutate(parish = 
+#                    parish %>% 
+#                    str_to_title() %>% 
+#                    paste0(" Parish")) %>% 
+#           mutate(parish = 
+#                    parish %>% 
+#                    str_replace_all("The", "the") %>% 
+#                    str_replace_all("St ", "St. ") %>% 
+#                    str_replace_all("Desoto", "De Soto") %>% 
+#                    str_replace_all("Vermillion", "Vermilion")) %>% 
+#           left_join(census_data_la %>% 
+#                       rename("pop_estimate" = "estimate") %>% 
+#                       dplyr::select(geoid, parish, pop_estimate), 
+#                     by = c("parish")) %>% 
+#           mutate(pop_estimate_cat = 
+#                    case_when(pop_estimate <= 10000 ~ "< 10k", 
+#                              pop_estimate > 10000 & pop_estimate <= 20000 ~ "10k - 20k", 
+#                              pop_estimate > 20000 & pop_estimate <= 50000 ~ "20k - 50k", 
+#                              pop_estimate > 50000 & pop_estimate <= 100000 ~ "50k - 100k", 
+#                              pop_estimate > 100000 ~ "> 100k", 
+#                              TRUE ~ NA) %>% 
+#                    factor(levels = c("< 10k", "10k - 20k", "20k - 50k",
+#                                      "50k - 100k", "> 100k"))) %>% 
+#           filter(is.na(age) == FALSE) %>% 
+#           group_by(parish, age, pop_estimate_cat) %>% 
+#           dplyr::summarize(count = n()) %>% 
+#           ungroup() %>% 
+#           ggplot(aes(x = age, weight = count)) + 
+#           geom_histogram(aes(fill = pop_estimate_cat, y = after_stat(count)), color = "black") + 
+#           scale_fill_viridis_d(option = "viridis", direction = -1) +
+#           facet_wrap_paginate(~ parish, ncol = ceiling(parish_num/4), nrow = 4, scales = "free_y", page = .x) +
+#           labs(caption = "Age Spread by Parish", 
+#                x = "Age",
+#                y = "Count",
+#                fill = "Total Parish Populations") + 
+#           theme_minimal() + 
+#           theme(legend.position = "bottom"))
+parish_num <- 8
+
+age_parish_hist <- 
+  parish_data_wide_full %>% 
+  group_by(parish) %>% 
+  mutate(charge_count = n()) %>% 
+  ungroup() %>% 
+  arrange(desc(charge_count)) %>% 
+  mutate(rank = dense_rank(desc(charge_count))) %>% 
+  filter(rank <= parish_num) %>% 
+  mutate(parish = 
+           parish %>% 
+           str_to_title() %>% 
+           paste0(" Parish")) %>% 
+  mutate(parish = 
+           parish %>% 
+           str_replace_all("The", "the") %>% 
+           str_replace_all("St ", "St. ") %>% 
+           str_replace_all("Desoto", "De Soto") %>% 
+           str_replace_all("Vermillion", "Vermilion")) %>% 
+  left_join(census_data_la %>% 
+              rename("pop_estimate" = "estimate") %>% 
+              dplyr::select(geoid, parish, pop_estimate), 
+            by = c("parish")) %>% 
+  mutate(pop_estimate_cat = 
+           case_when(pop_estimate <= 10000 ~ "< 10k", 
+                     pop_estimate > 10000 & pop_estimate <= 20000 ~ "10k - 20k", 
+                     pop_estimate > 20000 & pop_estimate <= 50000 ~ "20k - 50k", 
+                     pop_estimate > 50000 & pop_estimate <= 100000 ~ "50k - 100k", 
+                     pop_estimate > 100000 ~ "> 100k", 
+                     TRUE ~ NA) %>% 
+           factor(levels = c("< 10k", "10k - 20k", "20k - 50k",
+                             "50k - 100k", "> 100k"))) %>% 
+  filter(is.na(age) == FALSE) %>% 
+  group_by(parish, age, pop_estimate_cat) %>% 
+  dplyr::summarize(count = n()) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = age, weight = count)) + 
+  geom_histogram(aes(y = after_stat(count)), color = "black", fill = "steelblue") + 
+  # scale_fill_viridis_d(option = "viridis", direction = -1) +
+  facet_wrap(~ parish, ncol = ceiling(parish_num/4), nrow = 4, scales = "fixed") +
+  labs(caption = "Age Spread by Parish", 
+       x = "Age",
+       y = "Count",
+       fill = "Total Parish Populations") + 
+  theme_minimal() + 
+  theme(legend.position = "bottom")
+```
+
+## Understanding Types of Charge(s)
+
+Below is a table indicating the prevalence of certain charges across the state:
+
+```{r}
+charges_counts_kbl
+```
+
+## Spread of Charges by Parish
+
+```{r, fig.width = 7, fig.height = 7}
+parish_bar_plot
+```
+
+## Spread of Charges by Age
+
+```{r, fig.width = 7, fig.height = 7}
+age_hist
+```
+
+## Spread of Charges by Age and County
+
+```{r, fig.width = 8, fig.height = 10}
+age_parish_hist
+```
